@@ -4,15 +4,17 @@
  * Created: 1/4/2020 11:59:39 PM
  * Author : user
  */ 
+#define F_CPU				(16000000UL)
 
 #include <avr/io.h>
 #include <avr/wdt.h>
 #include <avr/interrupt.h>
 #include <avr/boot.h>
 #include <stdbool.h>
+#include <util/delay.h>
 
 #define MAIN_FW_ADDRESS		(0)
-#define F_CPU				(16000000L)
+
 
 #define SUPPORT_FW_UPDATE	(0)
 
@@ -60,6 +62,24 @@ p_void_func reset = (p_void_func) MAIN_FW_ADDRESS;
 
 uint8_t uart_buffer[FLASH_PAGE_SIZE_BYTES];
 
+void wdt_init(uint8_t timeout)
+{
+	uint8_t mask = (timeout > WDTO_2S) ? BIT(WDP3) | (timeout & 0x7) : timeout;
+	cli();
+	wdt_reset();
+	BIT_CLR(MCUSR, WDRF);
+	WDTCSR |= BIT(WDCE) | BIT(WDE);
+	WDTCSR = BIT(WDIE) | BIT(WDP1) | BIT(WDP2);
+	
+	sei();
+}
+
+void clock_init(void)
+{
+	// no external clock divider
+	CLKPR = BIT(CLKPCE);
+	CLKPR = 0;
+}
 
 void gpio_init(void)
 {
@@ -152,8 +172,9 @@ uint8_t get_page_data(uint8_t * buffer)
 	
 	while (page_bytes < FLASH_PAGE_SIZE_BYTES)
 	{
-		*buffer++ = uart_getch();
-		uart_putch('*');
+		uint8_t c = uart_getch();
+		*buffer++ = c;
+		uart_putch(c);
 		page_bytes++;
 	}
 	
@@ -204,22 +225,25 @@ void update_fw(void)
 	uart_print("Update FW");
 }
 
-void restart(void)
-{
-	wdt_disable();
-	reset();
-}
+//void restart(void)
+//{
+	//wdt_disable();
+	//reset();
+//}
 
 ISR(WDT_vect)
 {
-	LED_TOGGLE;
+	PORTB ^= BIT(PORTB5);
 	wdt_reset();
 }
 
 int main(void)
 {
+	clock_init();
 	gpio_init();
+	wdt_init(WDTO_1S);
 	
+/*
 	if (BUTTON == DOWN)
 	{
 		LED_ON;
@@ -258,7 +282,11 @@ int main(void)
 			}
 		}
 	}
+*/
+	//reset();	
+	while(1)
+	{
 
-	reset();	
+	}
 }
 
