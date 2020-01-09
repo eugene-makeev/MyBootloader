@@ -13,8 +13,8 @@
 #include <stdbool.h>
 #include <util/delay.h>
 
+#define BOOTLOADER_ADDRESS	(0x3800)
 #define MAIN_FW_ADDRESS		(0)
-
 
 #define SUPPORT_FW_UPDATE	(0)
 
@@ -24,7 +24,7 @@
 #define FLASH_PAGE_SIZE_WORDS	(64)
 #define FLASH_PAGE_SIZE_BYTES	(FLASH_PAGE_SIZE_WORDS * sizeof(uint16_t))
 
-#define GCODE_BASE_ADDR			(0x3E00) // TBD
+#define GCODE_BASE_ADDR			(0x3400)
 #define GCODE_MAX_SIZE_BYTES	(2048)
 #define GCODE_MAX_SIZE_PAGES	(GCODE_MAX_SIZE_BYTES / FLASH_PAGE_SIZE_BYTES)
 
@@ -62,15 +62,15 @@ p_void_func reset = (p_void_func) MAIN_FW_ADDRESS;
 
 uint8_t uart_buffer[FLASH_PAGE_SIZE_BYTES];
 
-void wdt_init(uint8_t timeout)
+void wdt_init(uint8_t timeout, bool isren, bool rsten)
 {
-	uint8_t mask = (timeout > WDTO_2S) ? BIT(WDP3) | (timeout & 0x7) : timeout;
+	uint8_t wdt_settings = (isren << WDIE) | (rsten << WDE) | ((timeout & 0x08) << WDP3) | (timeout & 0x7);
+	
 	cli();
 	wdt_reset();
 	BIT_CLR(MCUSR, WDRF);
-	WDTCSR |= BIT(WDCE) | BIT(WDE);
-	WDTCSR = BIT(WDIE) | BIT(WDP1) | BIT(WDP2);
-	
+	WDTCSR |= BIT(WDCE);
+	WDTCSR = wdt_settings;
 	sei();
 }
 
@@ -234,14 +234,13 @@ void update_fw(void)
 ISR(WDT_vect)
 {
 	PORTB ^= BIT(PORTB5);
-	wdt_reset();
 }
 
 int main(void)
 {
 	clock_init();
 	gpio_init();
-	wdt_init(WDTO_1S);
+	wdt_init(WDTO_1S, true, false);
 	
 /*
 	if (BUTTON == DOWN)
@@ -249,7 +248,6 @@ int main(void)
 		LED_ON;
 		
 		uart_init(BAUD_RATE_115200);
-		wdt_enable(WDTO_1S);
 		
 		while (1)
 		{
