@@ -55,14 +55,101 @@
 #define LED_OFF		(BIT_CLR(LED_PORT, LED_PIN))
 #define LED_TOGGLE	(BIT_INV(LED_PORT, LED_PIN))
 
+#define WDT_PERIOD	(15)
+#define LED_TIME	(500 / WDT_PERIOD)
+
+#define UART_SCAN_TIMEOUT	(150 / WDT_PERIOD)
+#define SYNC_TIME			(500 / WDT_PERIOD)
+
 #define BUTTON		(BIT_GET(PGM_PORT, PGM_PIN))
+
+#define ACK_CMD		("[ack]")
+#define NACK_CMD	("[nak]")
+#define SYNC		("[MyGrbl]")
+
+#define UPDATE_FW_CMD		('F')
+#define UPDATE_GCODE_CMD	('G')
+#define PAGE_PROGRAM_CMD	('P')
+#define RESET_CMD			('R')
+
+typedef struct 
+{
+	uint16_t address;
+	uint8_t buffer[SPM_PAGESIZE];
+	uint16_t crc16;
+} cmd_packet_t;
+
+typedef struct
+{
+	uint8_t ticks_15ms;
+	uint8_t compare;
+	//bool reload;
+	bool done;
+} gp_timer_t;
+
+enum
+{
+	LED_TIMER = 0,
+	DELAY_TIMER,
+	SYSTEM_TIMER,
+	SYNC_TIMER,
+	MAX_TIMER
+};
+
+gp_timer_t gp_timer[MAX_TIMER];
 
 // declare jump to main FW
 typedef void (*p_void_func)(void);
 p_void_func reset = (p_void_func) MAIN_FW_ADDRESS;
 
 uint8_t uart_buffer[SPM_PAGESIZE];
-bool wdt_isr = false;
+
+
+void gp_timer_start(uint8_t timer, uint8_t ticks)
+{
+	cli();
+	gp_timer[timer].ticks_15ms = 0;
+	gp_timer[timer].compare = ticks;
+	gp_timer[timer].done = false;
+	//gp_timer[timer].reload = reload;
+	sei();
+}
+
+void gp_timer_restart(uint8_t timer)
+{
+	cli();
+	gp_timer[timer].ticks_15ms = 0;
+	gp_timer[timer].done = false;
+	sei();
+}
+
+inline void gp_timer_count(void)
+{
+	for (uint8_t timer = LED_TIMER; timer < MAX_TIMER; timer++)
+	{
+		if (++gp_timer[timer].ticks_15ms == gp_timer[timer].compare)
+		{
+			gp_timer[timer].done = true;
+			gp_timer[timer].ticks_15ms = 0;
+		}
+	}
+}
+
+bool gp_timer_get_rdy(uint8_t timer)
+{
+	return gp_timer[timer].done;
+}
+
+bool gp_timer_get_clr_rdy(uint8_t timer)
+{
+	if (gp_timer[timer].done)
+	{
+		gp_timer_restart(timer);
+		return true;
+	}
+	
+	return false;
+}
 
 void wdt_init(uint8_t timeout, bool isr_en, bool rst_en)
 {
@@ -145,17 +232,14 @@ bool uart_scan(uint8_t * data, bool timeout)
 	bool status = false;
 	if (timeout)
 	{
-		cli();
-		wdt_reset();
-		wdt_isr = false;
-		sei();
+		gp_timer_start(SYSTEM_TIMER, UART_SCAN_TIMEOUT);
 	}
 	
-	while (!timeout || !wdt_isr)
+	while (!timeout || !(gp_timer_get_rdy(SYSTEM_TIMER)))
 	{
-		LED_TOGGLE;
 		if ((UCSR0A & BIT(RXC0)))
 		{
+			LED_TOGGLE;
 			*data = UDR0;
 			status = true;
 			break;
@@ -165,19 +249,66 @@ bool uart_scan(uint8_t * data, bool timeout)
 	return status;
 }
 
-
 void uart_print(const char * str)
 {
 	while (*str)
 	{
- 		if (*str == '\n')
- 		{
- 			uart_putch('\r');
- 		}
- 		
+		if (*str == '\n')
+		{
+			uart_putch('\r');
+		}
+		
 		uart_putch(*str);
 		str++;
 	}
+}
+
+uint8_t get_cmd_code(const uint8_t * buffer)
+{
+	// use simple single-byte commands for now
+	switch(*buffer)
+	{
+		case 'G':
+		case 'F':
+		case 'R':
+			uart_print(ACK_CMD);
+			break;
+		case 0:
+			// empty command
+			break;
+		default:
+			uart_print(NACK_CMD);
+			return 0;
+	}
+	
+	return *buffer;
+}
+
+uint8_t uart_get_cmd(void)
+{
+	uint8_t *buffer = uart_buffer;
+	uint8_t count = 0;
+	bool start = false;
+	*buffer = 0;
+	
+	while (uart_scan(buffer, true))
+	{
+		if (*buffer == '[')
+		{
+			start = true;
+		}
+		else if((*buffer == ']') && start)
+		{
+			break;
+		}
+		else if (start)
+		{
+			buffer++;
+			count++;
+		}
+	}
+	
+	return get_cmd_code(uart_buffer);
 }
 
 void fill_page_buffer(uint16_t address, uint8_t * buffer)
@@ -282,8 +413,12 @@ ISR(WDT_vect)
 {
 	wdt_reset();
 	WDTCSR |= (1 << WDIE);
-	wdt_isr = true;
-	LED_TOGGLE;
+	gp_timer_count();
+	
+	if (gp_timer_get_clr_rdy(LED_TIMER))
+	{
+		LED_TOGGLE;
+	}
 }
 
 int main(void)
@@ -296,37 +431,35 @@ int main(void)
 	if (BUTTON == DOWN)
 	{
 		uart_init(BAUD_RATE_115200);
-		wdt_init(WDTO_250MS, true, false);
+		wdt_init(WDTO_15MS, true, false);
+		
+		gp_timer_start(SYNC_TIMER, SYNC_TIME);
+		gp_timer_start(LED_TIMER, LED_TIME);
 		
 		while (1)
 		{
-			//uart_print("\033[H");
-			uart_print("G - update g-code\n");
-#if (SUPPORT_FW_UPDATE == 1)
-			uart_print("F - update firmware\n");
-#endif
-			uart_print("R - reset\n");
-			
-			uint8_t input = uart_getch();
-			
-			switch (input)
+			switch (uart_get_cmd())
 			{
-			case 'G':
-			case 'g':
+			case UPDATE_GCODE_CMD:
 				update_gcode();
 				break;
 #if (SUPPORT_FW_UPDATE == 1)				
-			case 'F':
-			case 'f':
+			case UPDATE_FW_CMD:
 				update_fw();
 				break;
 #endif				
-			case 'R':
-			case 'r':
+			case RESET_CMD:
 				restart();
+				break;
+			case PAGE_PROGRAM_CMD:
 				break;
 			default:
 				break;
+			}
+			
+			if (gp_timer_get_clr_rdy(SYNC_TIMER))
+			{
+				uart_print(SYNC);
 			}		
 		}
 	}
