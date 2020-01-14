@@ -74,18 +74,24 @@
 #define RESET_CMD			('R')
 #define INVALID_CMD			(0xFF)
 
+
+// declare jump to main FW
+typedef void (*p_void_func)(void);
+p_void_func reset = (p_void_func) MAIN_FW_ADDRESS;
+
 typedef struct 
 {
 	uint16_t address;
 	uint8_t buffer[SPM_PAGESIZE];
 	uint16_t crc16;
-} cmd_packet_t;
+} page_program_cmd_packet_t;
+
+uint8_t uart_buffer[sizeof(page_program_cmd_packet_t)];
 
 typedef struct
 {
 	uint8_t ticks_15ms;
 	uint8_t compare;
-	//bool reload;
 	bool done;
 } gp_timer_t;
 
@@ -99,12 +105,6 @@ enum
 
 volatile gp_timer_t gp_timer[MAX_TIMER];
 
-// declare jump to main FW
-typedef void (*p_void_func)(void);
-p_void_func reset = (p_void_func) MAIN_FW_ADDRESS;
-
-uint8_t uart_buffer[SPM_PAGESIZE];
-
 
 void gp_timer_start(uint8_t timer, uint8_t ticks)
 {
@@ -112,7 +112,6 @@ void gp_timer_start(uint8_t timer, uint8_t ticks)
 	gp_timer[timer].ticks_15ms = 0;
 	gp_timer[timer].compare = ticks;
 	gp_timer[timer].done = false;
-	//gp_timer[timer].reload = reload;
 	sei();
 }
 
@@ -274,13 +273,7 @@ uint8_t get_cmd_code(const uint8_t * buffer)
 	// use simple single-byte commands for now
 	switch(*buffer)
 	{
-		case 'G':
-		case 'F':
-		case 'R':
-			uart_print(ACK_CMD);
-			break;
-		case 0:
-			// empty command
+		case PAGE_PROGRAM_CMD:
 			break;
 		default:
 			uart_print(NACK_CMD);
@@ -294,7 +287,7 @@ uint8_t uart_get_cmd(void)
 {
 	uint8_t *buffer = uart_buffer;
 	uint8_t count = 0;
-	bool start = false;
+	bool start = false, cmd_received = false;
 	*buffer = 0;
 	
 	while (uart_scan(buffer, false))
@@ -305,6 +298,7 @@ uint8_t uart_get_cmd(void)
 		}
 		else if((*buffer == ']') && start)
 		{
+			cmd_received = true;
 			break;
 		}
 		else if (start)
@@ -314,7 +308,7 @@ uint8_t uart_get_cmd(void)
 		}
 	}
 	
-	return start ? get_cmd_code(uart_buffer) : INVALID_CMD;
+	return cmd_received ? get_cmd_code(uart_buffer) : INVALID_CMD;
 }
 
 void fill_page_buffer(uint16_t address, uint8_t * buffer)
@@ -347,9 +341,51 @@ void program_page(uint16_t address, uint8_t *buffer)
 	SREG = sreg;
 }
 
-void page_program_handle(void)
+//  CRC-16 CCITT, Poly: 0x8408, Init: 0xFFFF
+unsigned short crc16_update (uint16_t crc, uint8_t data)
 {
+	uint16_t tmp;
+	data ^= crc & 0xFF;
+	data ^= data << 4;
+	tmp = (((uint16_t)data << 8) | ((crc >> 8) & 0xFF));
+	tmp ^= (uint8_t)(data >> 4);
+	return tmp ^= ((uint16_t)data << 3);
+}
+
+bool page_program_receive(page_program_cmd_packet_t * cmd)
+{
+	uint8_t * buffer = (uint8_t *) cmd;
+	uint16_t crc16 = 0xFFFF;
 	
+	uint8_t bytes = 0;
+	
+	while (bytes < sizeof(page_program_cmd_packet_t) && uart_scan(buffer, false))
+	{
+		if (bytes < (sizeof(page_program_cmd_packet_t) - sizeof(uint16_t)))
+		{
+			crc16_update(crc16, *buffer);
+		}
+		
+		buffer++;
+		bytes++;
+	}
+	
+	return (bytes == sizeof(page_program_cmd_packet_t) && (crc16 == cmd->crc16));
+}
+
+bool page_program_handle(void)
+{
+	page_program_cmd_packet_t * pp_cmd_ptr = (page_program_cmd_packet_t *) uart_buffer;
+	
+	bool status = page_program_receive(pp_cmd_ptr);
+	
+	if (status)
+	{
+		program_page(pp_cmd_ptr->address, pp_cmd_ptr->buffer);
+	}
+	
+	uart_print(status ? ACK_CMD : NACK_CMD);
+	return status;
 }
 
 void update_gcode(void)
