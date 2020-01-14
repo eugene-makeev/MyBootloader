@@ -93,12 +93,11 @@ enum
 {
 	LED_TIMER = 0,
 	TIMEOUT_TIMER,
-	//SYSTEM_TIMER,
 	SYNC_TIMER,
 	MAX_TIMER
 };
 
-gp_timer_t gp_timer[MAX_TIMER];
+volatile gp_timer_t gp_timer[MAX_TIMER];
 
 // declare jump to main FW
 typedef void (*p_void_func)(void);
@@ -348,6 +347,11 @@ void program_page(uint16_t address, uint8_t *buffer)
 	SREG = sreg;
 }
 
+void page_program_handle(void)
+{
+	
+}
+
 void update_gcode(void)
 {
 	uint16_t address = GCODE_BASE_ADDR;
@@ -430,7 +434,7 @@ ISR(WDT_vect)
 
 int main(void)
 {
-	wdt_init(WDTO_1S, true, false);
+	wdt_disable();
 	isr_init();
 	gpio_init();
 	sei();
@@ -467,9 +471,7 @@ int main(void)
 				break;
 			}
 			
-			uart_print(SYNC);
-			
-			if (gp_timer_get_rdy(SYNC_TIMER))
+			if (gp_timer_get_clr_rdy(SYNC_TIMER))
 			{
 				uart_print(SYNC);
 			}		
