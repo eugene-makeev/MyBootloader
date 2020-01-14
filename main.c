@@ -16,7 +16,8 @@
 #define BOOTLOADER_ADDRESS	(0x7000)
 #define MAIN_FW_ADDRESS		(0)
 
-#define SUPPORT_FW_UPDATE	(0)
+#define SUPPORT_FW_UPDATE		(0)
+#define SUPPORT_GCODE_UPDATE	(0)
 
 #define BAUD_RATE_115200	(115200L)
 #define BAUD_RATE_57600		(57600L)
@@ -71,6 +72,7 @@
 #define UPDATE_GCODE_CMD	('G')
 #define PAGE_PROGRAM_CMD	('P')
 #define RESET_CMD			('R')
+#define INVALID_CMD			(0xFF)
 
 typedef struct 
 {
@@ -313,7 +315,7 @@ uint8_t uart_get_cmd(void)
 		}
 	}
 	
-	return get_cmd_code(uart_buffer);
+	return start ? get_cmd_code(uart_buffer) : INVALID_CMD;
 }
 
 void fill_page_buffer(uint16_t address, uint8_t * buffer)
@@ -445,9 +447,11 @@ int main(void)
 		{
 			switch (uart_get_cmd())
 			{
+#if (SUPPORT_GCODE_UPDATE == 1)
 			case UPDATE_GCODE_CMD:
 				update_gcode();
 				break;
+#endif
 #if (SUPPORT_FW_UPDATE == 1)				
 			case UPDATE_FW_CMD:
 				update_fw();
@@ -457,6 +461,7 @@ int main(void)
 				restart();
 				break;
 			case PAGE_PROGRAM_CMD:
+				page_program_handle();
 				break;
 			default:
 				break;
