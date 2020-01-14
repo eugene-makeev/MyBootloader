@@ -274,6 +274,7 @@ uint8_t get_cmd_code(const uint8_t * buffer)
 	switch(*buffer)
 	{
 		case PAGE_PROGRAM_CMD:
+		case RESET_CMD:
 			break;
 		default:
 			uart_print(NACK_CMD);
@@ -388,68 +389,6 @@ bool page_program_handle(void)
 	return status;
 }
 
-void update_gcode(void)
-{
-	uint16_t address = GCODE_BASE_ADDR;
-	uint8_t bytes_received = 0;
-	bool last_page = false;
-	
-	uart_print("Update G-code:\n");
-	
-	for (uint8_t gcode_pages = 0; gcode_pages < GCODE_MAX_SIZE_PAGES; gcode_pages++)
-	{
-		if (last_page)
-		{
-			boot_page_erase_safe(address);
-		}
-		else
-		{
-			// get page from UART
-			for (bytes_received = 0; bytes_received < SPM_PAGESIZE; bytes_received++)
-			{
-				last_page = !uart_scan(&uart_buffer[bytes_received], (bytes_received + gcode_pages == 0));
-				if (last_page)
-				{
-					break;
-				}
-				uart_putch(uart_buffer[bytes_received]);
-			}
-			
-			// fill the page till the end to erase previous g-code file
-			while (bytes_received < SPM_PAGESIZE)
-			{
-				uart_buffer[bytes_received++] = 0xFF;
-			}
-			
-			program_page(address, uart_buffer);
-			bytes_received = 0;
-		}
-
-		address += SPM_PAGESIZE;			
-	}
-	
-	// skip bytes
-	bytes_received = 0;
-	while (uart_scan(&uart_buffer[0], true))
-	{
-		bytes_received++;
-	}
-
-	if (bytes_received)
-	{
-		uart_print("\nWARNING: File exceeds the maximum g-code size 2048 bytes, truncated.\n");
-	}	
-	uart_print("\nDone\n");
-
-	
-	boot_rww_enable();
-}
-
-void update_fw(void)
-{
-	uart_print("Update FW:\n");
-}
-
 void restart(void)
 {
 	wdt_disable();
@@ -461,11 +400,6 @@ ISR(WDT_vect)
 	wdt_reset();
 	WDTCSR |= (1 << WDIE);
 	gp_timer_count();
-	
-	if (gp_timer_get_clr_rdy(LED_TIMER))
-	{
-		LED_TOGGLE;
-	}
 }
 
 int main(void)
@@ -486,31 +420,26 @@ int main(void)
 		while (1)
 		{
 			switch (uart_get_cmd())
-			{
-#if (SUPPORT_GCODE_UPDATE == 1)
-			case UPDATE_GCODE_CMD:
-				update_gcode();
-				break;
-#endif
-#if (SUPPORT_FW_UPDATE == 1)				
-			case UPDATE_FW_CMD:
-				update_fw();
-				break;
-#endif				
-			case RESET_CMD:
-				restart();
-				break;
+			{		
 			case PAGE_PROGRAM_CMD:
 				page_program_handle();
+				break;
+			case RESET_CMD:
+				restart();
 				break;
 			default:
 				break;
 			}
 			
+			if (gp_timer_get_clr_rdy(LED_TIMER))
+			{
+				LED_TOGGLE;
+			}
+			
 			if (gp_timer_get_clr_rdy(SYNC_TIMER))
 			{
 				uart_print(SYNC);
-			}		
+			}
 		}
 	}
 
