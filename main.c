@@ -58,7 +58,7 @@
 #define WDT_PERIOD	(15)
 #define LED_TIME	(500 / WDT_PERIOD)
 
-#define UART_SCAN_TIMEOUT	(150 / WDT_PERIOD)
+#define UART_SCAN_TIMEOUT	(45 / WDT_PERIOD)
 #define SYNC_TIME			(500 / WDT_PERIOD)
 
 #define BUTTON		(BIT_GET(PGM_PORT, PGM_PIN))
@@ -90,8 +90,8 @@ typedef struct
 enum
 {
 	LED_TIMER = 0,
-	DELAY_TIMER,
-	SYSTEM_TIMER,
+	TIMEOUT_TIMER,
+	//SYSTEM_TIMER,
 	SYNC_TIMER,
 	MAX_TIMER
 };
@@ -227,25 +227,30 @@ uint8_t uart_getch(void)
 	return UDR0;
 }
 
-bool uart_scan(uint8_t * data, bool timeout)
+bool uart_scan(uint8_t * data, bool wait)
 {
 	bool status = false;
-	if (timeout)
-	{
-		gp_timer_start(SYSTEM_TIMER, UART_SCAN_TIMEOUT);
-	}
 	
-	while (!timeout || !(gp_timer_get_rdy(SYSTEM_TIMER)))
+	if (wait)
 	{
-		if ((UCSR0A & BIT(RXC0)))
+		*data = uart_getch();
+		status = true;
+	}
+	else
+	{
+		gp_timer_start(TIMEOUT_TIMER, UART_SCAN_TIMEOUT);
+		
+		while (!gp_timer_get_rdy(TIMEOUT_TIMER))
 		{
-			LED_TOGGLE;
-			*data = UDR0;
-			status = true;
-			break;
+			if ((UCSR0A & BIT(RXC0)))
+			{
+				LED_TOGGLE;
+				*data = UDR0;
+				status = true;
+			}
 		}
 	}
-	
+
 	return status;
 }
 
@@ -291,7 +296,7 @@ uint8_t uart_get_cmd(void)
 	bool start = false;
 	*buffer = 0;
 	
-	while (uart_scan(buffer, true))
+	while (uart_scan(buffer, false))
 	{
 		if (*buffer == '[')
 		{
@@ -360,7 +365,7 @@ void update_gcode(void)
 			// get page from UART
 			for (bytes_received = 0; bytes_received < SPM_PAGESIZE; bytes_received++)
 			{
-				last_page = !uart_scan(&uart_buffer[bytes_received], (bytes_received + gcode_pages > 0));
+				last_page = !uart_scan(&uart_buffer[bytes_received], (bytes_received + gcode_pages == 0));
 				if (last_page)
 				{
 					break;
@@ -457,7 +462,9 @@ int main(void)
 				break;
 			}
 			
-			if (gp_timer_get_clr_rdy(SYNC_TIMER))
+			uart_print(SYNC);
+			
+			if (gp_timer_get_rdy(SYNC_TIMER))
 			{
 				uart_print(SYNC);
 			}		
