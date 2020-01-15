@@ -57,10 +57,11 @@
 #define LED_TOGGLE	(BIT_INV(LED_PORT, LED_PIN))
 
 #define WDT_PERIOD	(15)
-#define LED_TIME	(500 / WDT_PERIOD)
+#define LED_TIME_DEFAULT	(500 / WDT_PERIOD)
+#define LED_TIME_CONNECTED	(100 / WDT_PERIOD)
 
-#define UART_SCAN_TIMEOUT	(45 / WDT_PERIOD)
-#define SYNC_TIME			(500 / WDT_PERIOD)
+#define AUTO_DETECT_FEATURE		(1)
+#define AUTO_DETECT_TIME		(100 / WDT_PERIOD)
 
 #define BUTTON		(BIT_GET(PGM_PORT, PGM_PIN))
 
@@ -68,8 +69,7 @@
 #define NACK_CMD	("[nak]")
 #define SYNC		("[MyGrbl]")
 
-#define UPDATE_FW_CMD		('F')
-#define UPDATE_GCODE_CMD	('G')
+#define IDENTIFY_CMD		('I')
 #define PAGE_PROGRAM_CMD	('P')
 #define RESET_CMD			('R')
 #define INVALID_CMD			(0xFF)
@@ -227,33 +227,6 @@ uint8_t uart_getch(void)
 	return UDR0;
 }
 
-bool uart_scan(uint8_t * data, bool wait)
-{
-	bool status = false;
-	
-	if (wait)
-	{
-		*data = uart_getch();
-		status = true;
-	}
-	else
-	{
-		gp_timer_start(TIMEOUT_TIMER, UART_SCAN_TIMEOUT);
-		
-		while (!gp_timer_get_rdy(TIMEOUT_TIMER))
-		{
-			if ((UCSR0A & BIT(RXC0)))
-			{
-				LED_TOGGLE;
-				*data = UDR0;
-				status = true;
-			}
-		}
-	}
-
-	return status;
-}
-
 void uart_print(const char * str)
 {
 	while (*str)
@@ -275,6 +248,7 @@ uint8_t get_cmd_code(const uint8_t * buffer)
 	{
 		case PAGE_PROGRAM_CMD:
 		case RESET_CMD:
+		case IDENTIFY_CMD:
 			break;
 		default:
 			uart_print(NACK_CMD);
@@ -287,12 +261,13 @@ uint8_t get_cmd_code(const uint8_t * buffer)
 uint8_t uart_get_cmd(void)
 {
 	uint8_t *buffer = uart_buffer;
-	uint8_t count = 0;
 	bool start = false, cmd_received = false;
 	*buffer = 0;
 	
-	while (uart_scan(buffer, false))
+	while (true)
 	{
+		*buffer = uart_getch();
+		
 		if (*buffer == '[')
 		{
 			start = true;
@@ -305,7 +280,6 @@ uint8_t uart_get_cmd(void)
 		else if (start)
 		{
 			buffer++;
-			count++;
 		}
 	}
 	
@@ -358,20 +332,19 @@ bool page_program_receive(page_program_cmd_packet_t * cmd)
 	uint8_t * buffer = (uint8_t *) cmd;
 	uint16_t crc16 = 0xFFFF;
 	
-	uint8_t bytes = 0;
-	
-	while (bytes < sizeof(page_program_cmd_packet_t) && uart_scan(buffer, false))
+	for (uint8_t bytes = 0; bytes < sizeof(page_program_cmd_packet_t); bytes++)
 	{
+		*buffer = uart_getch();
+		
 		if (bytes < (sizeof(page_program_cmd_packet_t) - sizeof(uint16_t)))
 		{
 			crc16_update(crc16, *buffer);
 		}
 		
 		buffer++;
-		bytes++;
 	}
 	
-	return (bytes == sizeof(page_program_cmd_packet_t) && (crc16 == cmd->crc16));
+	return (crc16 == cmd->crc16);
 }
 
 bool page_program_handle(void)
@@ -400,6 +373,11 @@ ISR(WDT_vect)
 	wdt_reset();
 	WDTCSR |= (1 << WDIE);
 	gp_timer_count();
+	
+	if (gp_timer_get_clr_rdy(LED_TIMER))
+	{
+		LED_TOGGLE;
+	}
 }
 
 int main(void)
@@ -409,18 +387,28 @@ int main(void)
 	gpio_init();
 	sei();
 	
+	bool connected = false;
+	
 	if (BUTTON == DOWN)
 	{
 		uart_init(BAUD_RATE_115200);
 		wdt_init(WDTO_15MS, true, false);
-		
-		gp_timer_start(SYNC_TIMER, SYNC_TIME);
-		gp_timer_start(LED_TIMER, LED_TIME);
+
+#if (AUTO_DETECT_FEATURE == 1)		
+		gp_timer_start(SYNC_TIMER, AUTO_DETECT_TIME);
+#endif
+
+		gp_timer_start(LED_TIMER, LED_TIME_DEFAULT);
 		
 		while (1)
 		{
 			switch (uart_get_cmd())
 			{		
+			case IDENTIFY_CMD:
+				uart_print("[MyGrbl v1.0]");
+				gp_timer_start(LED_TIMER, LED_TIME_CONNECTED);
+				connected = true;
+				break;
 			case PAGE_PROGRAM_CMD:
 				page_program_handle();
 				break;
@@ -430,16 +418,13 @@ int main(void)
 			default:
 				break;
 			}
-			
-			if (gp_timer_get_clr_rdy(LED_TIMER))
-			{
-				LED_TOGGLE;
-			}
-			
-			if (gp_timer_get_clr_rdy(SYNC_TIMER))
-			{
-				uart_print(SYNC);
-			}
+
+#if (AUTO_DETECT_FEATURE == 1)
+ 			if (!connected && gp_timer_get_clr_rdy(SYNC_TIMER))
+ 			{
+ 				uart_print(SYNC);
+ 			}
+#endif
 		}
 	}
 
