@@ -67,6 +67,7 @@
 
 #define ACK_CMD		("[ack]")
 #define NACK_CMD	("[nak]")
+#define NACK_CMD_CRC ("[nak CRC")
 #define SYNC		("[MyGrbl]")
 
 #define IDENTIFY_CMD		('I')
@@ -79,14 +80,21 @@
 typedef void (*p_void_func)(void);
 p_void_func reset = (p_void_func) MAIN_FW_ADDRESS;
 
-typedef struct 
+typedef struct
 {
 	uint16_t address;
 	uint8_t buffer[SPM_PAGESIZE];
-	uint16_t crc16;
 } page_program_cmd_packet_t;
 
-uint8_t uart_buffer[sizeof(page_program_cmd_packet_t)];
+typedef struct
+{
+	uint8_t length;
+	page_program_cmd_packet_t cmd_packet;
+	uint16_t crc16;
+} cmd_packet_t;
+
+
+uint8_t uart_buffer[sizeof(cmd_packet_t)];
 
 typedef struct
 {
@@ -316,49 +324,71 @@ void program_page(uint16_t address, uint8_t *buffer)
 	SREG = sreg;
 }
 
-//  CRC-16 CCITT, Poly: 0x8408, Init: 0xFFFF
-unsigned short crc16_update (uint16_t crc, uint8_t data)
+unsigned short Crc16(unsigned char *pcBlock, unsigned short len)
 {
-	uint16_t tmp;
-	data ^= crc & 0xFF;
-	data ^= data << 4;
-	tmp = (((uint16_t)data << 8) | ((crc >> 8) & 0xFF));
-	tmp ^= (uint8_t)(data >> 4);
-	return tmp ^= ((uint16_t)data << 3);
+	unsigned short crc = 0xFFFF;
+	unsigned char i;
+
+	while (len--)
+	{
+		crc ^= *pcBlock++ << 8;
+
+		for (i = 0; i < 8; i++)
+		crc = crc & 0x8000 ? (crc << 1) ^ 0x1021 : crc << 1;
+	}
+	return crc;
 }
 
-bool page_program_receive(page_program_cmd_packet_t * cmd)
+bool page_program_receive(cmd_packet_t * cmd)
 {
-	uint8_t * buffer = (uint8_t *) cmd;
-	uint16_t crc16 = 0xFFFF;
+	uint8_t * buffer = (uint8_t *) &cmd->cmd_packet;
 	
-	for (uint8_t bytes = 0; bytes < sizeof(page_program_cmd_packet_t); bytes++)
+	cmd->length = uart_getch();
+	
+	for (uint8_t bytes = 0; bytes < cmd->length; bytes++)
 	{
 		*buffer = uart_getch();
-		
-		if (bytes < (sizeof(page_program_cmd_packet_t) - sizeof(uint16_t)))
-		{
-			crc16_update(crc16, *buffer);
-		}
-		
-		buffer++;
+		uart_putch(*buffer++);
 	}
+	
+	uint8_t padding = (SPM_PAGESIZE + sizeof(uint16_t)) - cmd->length;
+	
+	while (padding)
+	{
+		*buffer++ = 0;
+		padding--;
+	}
+	
+	cmd->crc16 = uart_getch();
+	cmd->crc16 |= uart_getch() << 8;
+	
+	uint16_t crc16 = Crc16((unsigned char*)&cmd->cmd_packet, cmd->length);
+	
+	uart_putch(crc16 >> 8);
+	uart_putch(crc16);
 	
 	return (crc16 == cmd->crc16);
 }
 
 bool page_program_handle(void)
 {
-	page_program_cmd_packet_t * pp_cmd_ptr = (page_program_cmd_packet_t *) uart_buffer;
+	cmd_packet_t * cmd_ptr = (cmd_packet_t *) uart_buffer;
 	
-	bool status = page_program_receive(pp_cmd_ptr);
+	bool status = page_program_receive(cmd_ptr);
 	
 	if (status)
 	{
-		program_page(pp_cmd_ptr->address, pp_cmd_ptr->buffer);
+		program_page(cmd_ptr->cmd_packet.address, cmd_ptr->cmd_packet.buffer);
 	}
 	
-	uart_print(status ? ACK_CMD : NACK_CMD);
+	uart_print(status ? ACK_CMD : NACK_CMD_CRC);
+	if (!status)
+	{
+		uart_putch((uint8_t )(cmd_ptr->crc16 >> 8));
+		uart_putch((uint8_t )(cmd_ptr->crc16));
+		uart_putch(']');
+	}
+	
 	return status;
 }
 
