@@ -72,7 +72,7 @@
 
 #define IDENTIFY_CMD		('I')
 #define PAGE_PROGRAM_CMD	('P')
-#define RESET_CMD			('R')
+#define RESTART_CMD			('R')
 #define INVALID_CMD			(0xFF)
 
 
@@ -255,7 +255,7 @@ uint8_t get_cmd_code(const uint8_t * buffer)
 	switch(*buffer)
 	{
 		case PAGE_PROGRAM_CMD:
-		case RESET_CMD:
+		case RESTART_CMD:
 		case IDENTIFY_CMD:
 			break;
 		default:
@@ -395,8 +395,10 @@ bool page_program_handle(void)
 
 void restart(void)
 {
+	// cold reset using WDT
 	wdt_disable();
-	reset();
+	wdt_enable(WDTO_15MS);
+	while(1);
 }
 
 ISR(WDT_vect)
@@ -443,7 +445,7 @@ int main(void)
 			case PAGE_PROGRAM_CMD:
 				page_program_handle();
 				break;
-			case RESET_CMD:
+			case RESTART_CMD:
 				restart();
 				break;
 			default:
