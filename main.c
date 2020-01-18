@@ -4,6 +4,12 @@
  * Created: 1/4/2020 11:59:39 PM
  * Author : user
  */ 
+
+
+// TODO: debug code cleanup
+// TODO: use interrupt for receive
+// TODO: introduce timeouts for commands to reset to default state if no data received during that time
+
 #define F_CPU				(16000000UL)
 
 #include <avr/io.h>
