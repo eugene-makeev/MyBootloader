@@ -324,18 +324,19 @@ void program_page(uint16_t address, uint8_t *buffer)
 	SREG = sreg;
 }
 
-unsigned short Crc16(unsigned char *pcBlock, unsigned short len)
+unsigned short Crc16(uint8_t *pcBlock, uint16_t len)
 {
-	unsigned short crc = 0xFFFF;
-	unsigned char i;
+	uint16_t crc = 0xFFFF;
+	uint8_t i;
 
 	while (len--)
 	{
 		crc ^= *pcBlock++ << 8;
 
 		for (i = 0; i < 8; i++)
-		crc = crc & 0x8000 ? (crc << 1) ^ 0x1021 : crc << 1;
+			crc = crc & 0x8000 ? (crc << 1) ^ 0x1021 : crc << 1;
 	}
+	
 	return crc;
 }
 
