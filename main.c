@@ -81,6 +81,7 @@
 #define RESTART_CMD			('R')
 #define INVALID_CMD			(0xFF)
 
+#define UNUSED_BYTE			(0xFF)
 
 // declare jump to main FW
 typedef void (*p_void_func)(void);
@@ -362,7 +363,7 @@ bool page_program_receive(cmd_packet_t * cmd)
 	
 	while (padding)
 	{
-		*buffer++ = 0;
+		*buffer++ = UNUSED_BYTE;
 		padding--;
 	}
 	

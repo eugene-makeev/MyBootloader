@@ -1,5 +1,9 @@
-*.hex
+*.lss
 *.o
 *.elf
 *.DS_Store
 *.d
+*.map
+*.elf
+*.eep
+*.srec
