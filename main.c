@@ -355,8 +355,7 @@ bool page_program_receive(cmd_packet_t * cmd)
 	
 	for (uint8_t bytes = 0; bytes < cmd->length; bytes++)
 	{
-		*buffer = uart_getch();
-		uart_putch(*buffer++);
+		*buffer++ = uart_getch();
 	}
 	
 	uint8_t padding = (SPM_PAGESIZE + sizeof(uint16_t)) - cmd->length;
@@ -371,9 +370,6 @@ bool page_program_receive(cmd_packet_t * cmd)
 	cmd->crc16 |= uart_getch() << 8;
 	
 	uint16_t crc16 = Crc16((unsigned char*)&cmd->cmd_packet, cmd->length);
-	
-	uart_putch(crc16 >> 8);
-	uart_putch(crc16);
 	
 	return (crc16 == cmd->crc16);
 }
@@ -390,12 +386,6 @@ bool page_program_handle(void)
 	}
 	
 	uart_print(status ? ACK_CMD : NACK_CMD_CRC);
-	if (!status)
-	{
-		uart_putch((uint8_t )(cmd_ptr->crc16 >> 8));
-		uart_putch((uint8_t )(cmd_ptr->crc16));
-		uart_putch(']');
-	}
 	
 	return status;
 }
@@ -423,14 +413,15 @@ ISR(WDT_vect)
 int main(void)
 {
 	wdt_disable();
-	isr_init();
+
 	gpio_init();
-	sei();
-	
-	bool connected = false;
 	
 	if (BUTTON == DOWN)
 	{
+		bool connected = false;
+			
+		isr_init();
+		sei();
 		uart_init(BAUD_RATE_115200);
 		wdt_init(WDTO_15MS, true, false);
 
