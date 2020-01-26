@@ -175,11 +175,10 @@ void wdt_init(uint8_t timeout, bool isr_en, bool rst_en)
 	WDTCSR = wdt_settings;
 }
 
-void isr_init(void)
+void isr_init(bool bls)
 {
-	// Move interrupts to Boot Flash section
 	MCUCR = _BV(IVCE);
-	MCUCR = _BV(IVSEL);
+	MCUCR = (bls << IVSEL);
 }
 
 void clock_init(void)
@@ -420,7 +419,7 @@ int main(void)
 	{
 		bool connected = false;
 			
-		isr_init();
+		isr_init(true);
 		sei();
 		uart_init(BAUD_RATE_115200);
 		wdt_init(WDTO_15MS, true, false);
@@ -457,8 +456,10 @@ int main(void)
  			}
 #endif
 		}
+		
+		isr_init(false);
 	}
-
+	
 	reset();	
 }
 
