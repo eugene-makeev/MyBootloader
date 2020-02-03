@@ -19,7 +19,10 @@
 #include <stdbool.h>
 #include <util/delay.h>
 
-#define BOOTLOADER_ADDRESS	(0x7000)
+//        Ext   High  Low
+// FUSES: FF    D2    CE
+
+#define BOOTLOADER_ADDRESS	(0x7800)
 #define MAIN_FW_ADDRESS		(0)
 
 #define SUPPORT_FW_UPDATE		(0)
